@@ -3,7 +3,8 @@
  * ---------------------------------------------------------------------------
  * Intercepta o clique (e a tecla Enter) em registros de qualquer view do Bases
  * (tabela, cards, lista e kanban) e abre a nota correspondente em uma janela
- * pop-out ou em um split, em vez de substituir a view na aba.
+ * pop-out ou em um split, em vez de substituir a view na aba. O mesmo vale para
+ * a nota criada pelo botão "+ New".
  *
  * Como funciona:
  *  - Um listener de "click"/"keydown" na fase de captura, registrado no
@@ -11,6 +12,8 @@
  *    nativos do registro.
  *  - O arquivo é resolvido pelo objeto interno da view (linha/card ->
  *    entry.file), com fallback para o link do nome renderizado no registro.
+ *  - No "+ New" o Obsidian continua criando a nota; apenas trocamos o popover
+ *    de renomear pela abertura no modo configurado.
  *  - Só interceptamos quando o clique abriria a própria nota; em caso de dúvida
  *    o comportamento nativo do Obsidian é preservado.
  */
@@ -36,6 +39,8 @@ const DEFAULT_SETTINGS = {
 
 class KanbanCardOpener extends Plugin {
 	async onload() {
+		// newItemMenu -> open() original, para restaurar no unload
+		this.wrappedMenus = new Map();
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
 		/** Janela pop-out reutilizada (modo "window"). */
 		this.openLeaf = null;
@@ -54,18 +59,25 @@ class KanbanCardOpener extends Plugin {
 		);
 
 		// documentos de janelas pop-out já existentes no layout restaurado
+		// e "+ New" das views do Bases já abertas
 		this.app.workspace.onLayoutReady(() => {
+			this.wrapNewItemMenus();
 			this.app.workspace.iterateAllLeaves((leaf) => {
 				const el = leaf.view && leaf.view.containerEl;
 				const doc = el && el.ownerDocument;
 				if (doc) this.watchDocument(doc);
 			});
 		});
+
+		// views do Bases abertas depois do carregamento
+		this.registerEvent(this.app.workspace.on("layout-change", () => this.wrapNewItemMenus()));
 	}
 
 	onunload() {
 		this.watchedDocs.clear();
 		this.openLeaf = null;
+		for (const [menu, open] of this.wrappedMenus) menu.open = open;
+		this.wrappedMenus.clear();
 	}
 
 	async saveSettings() {
@@ -188,22 +200,50 @@ class KanbanCardOpener extends Plugin {
 	/* Abertura                                                                */
 	/* ---------------------------------------------------------------------- */
 
-	async openFile(file, sourceLeaf) {
+	/**
+	 * Envolve o newItemMenu.open() de cada view do Bases: o Obsidian continua
+	 * criando a nota (via "+ New", "+" das colunas ou menu de contexto), mas o
+	 * arquivo é aberto no modo configurado em vez do popover de renomear.
+	 */
+	wrapNewItemMenus() {
+		this.app.workspace.iterateAllLeaves((leaf) => {
+			const view = leaf.view;
+			const menu = view && view.controller && view.controller.newItemMenu;
+			if (!menu || this.wrappedMenus.has(menu)) return;
+
+			const open = menu.open;
+			this.wrappedMenus.set(menu, open);
+			menu.open = async (name, onCreated) => {
+				let file = null;
+				await open.call(menu, name, (frontmatter, created) => {
+					file = created;
+					if (onCreated) onCreated(frontmatter, created);
+				});
+
+				// No telefone o Obsidian já abre em aba; "native" mantém o popover.
+				if (!file || Platform.isPhone || this.settings.openMode === "native") return;
+				menu.close(); // dispensa o popover de renomear
+				await this.openFile(file, leaf, { active: true, eState: { rename: "all" } });
+			};
+		});
+	}
+
+	async openFile(file, sourceLeaf, openState) {
 		const mode = this.settings.openMode;
 		try {
 			if (mode === "window" && Platform.isDesktop) {
-				await this.openInWindow(file);
+				await this.openInWindow(file, openState);
 				return;
 			}
 			if (mode === "tab") {
 				const leaf = this.app.workspace.getLeaf("tab");
-				await leaf.openFile(file);
+				await leaf.openFile(file, openState);
 				this.app.workspace.setActiveLeaf(leaf, { focus: true });
 				return;
 			}
 			// "window" fora do desktop cai para split
 			const direction = mode === "split-down" ? "horizontal" : "vertical";
-			await this.openInSplit(file, sourceLeaf, direction);
+			await this.openInSplit(file, sourceLeaf, direction, openState);
 		} catch (err) {
 			console.error("Kanban Card Opener: não foi possível abrir no modo escolhido.", err);
 			new Notice("Kanban Card Opener: abrindo no local padrão.");
@@ -215,13 +255,13 @@ class KanbanCardOpener extends Plugin {
 		}
 	}
 
-	async openInWindow(file) {
+	async openInWindow(file, openState) {
 		const ws = this.app.workspace;
 		let leaf = this.settings.reuseWindow ? this.openLeaf : null;
 		if (leaf && !this.isLeafUsable(leaf)) leaf = null;
 		if (!leaf) leaf = ws.getLeaf("window");
 		this.openLeaf = leaf;
-		await leaf.openFile(file);
+		await leaf.openFile(file, openState);
 		try {
 			ws.revealLeaf(leaf);
 		} catch (_) {
@@ -233,7 +273,7 @@ class KanbanCardOpener extends Plugin {
 		}
 	}
 
-	async openInSplit(file, sourceLeaf, direction) {
+	async openInSplit(file, sourceLeaf, direction, openState) {
 		const ws = this.app.workspace;
 		let leaf = null;
 		if (sourceLeaf && typeof ws.createLeafBySplit === "function") {
@@ -253,7 +293,7 @@ class KanbanCardOpener extends Plugin {
 			}
 			leaf = ws.getLeaf("split", direction);
 		}
-		await leaf.openFile(file);
+		await leaf.openFile(file, openState);
 		try {
 			ws.setActiveLeaf(leaf, { focus: true });
 		} catch (_) {
@@ -292,7 +332,8 @@ class KanbanCardOpenerSettingTab extends PluginSettingTab {
 			.setName("Modo de abertura")
 			.setDesc(
 				"Onde a nota abre ao clicar num registro (linha ou card) de qualquer view " +
-				"do Bases. 'Comportamento padrão do Obsidian' desativa a interceptação."
+				"do Bases — e também ao criar uma nota com o botão '+ New'. " +
+				"'Comportamento padrão do Obsidian' desativa a interceptação."
 			)
 			.addDropdown((dropdown) =>
 				dropdown

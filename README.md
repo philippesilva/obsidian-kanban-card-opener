@@ -17,6 +17,12 @@ Requer **Obsidian 1.14+** (versão que trouxe o Bases).
 
 Se o arquivo não puder ser resolvido, **nada é interceptado** e o comportamento padrão é mantido.
 
+## Botão "+ New"
+
+Ao criar uma nota com o **+ New** da barra de ferramentas, com o **+** das colunas do Kanban ou com **Adicionar item** no menu de contexto, o Obsidian continua criando a nota normalmente — mas, em vez do popover de renomear, ela abre **no modo de abertura configurado** (nova janela, split, nova aba), com o título já selecionado para você digitar o nome.
+
+Com a opção **Comportamento padrão do Obsidian** selecionada, o popover nativo é mantido.
+
 Também continuam nativos:
 
 - cliques em links para outras notas, âncoras e URLs externas;
@@ -57,4 +63,5 @@ Depois, em **Configurações → Comunidade → Plugins instalados**, ative o **
 
 - Em uma base **embutida numa nota** (embed), a resolução usa o link do nome; se o título do card não for a propriedade de arquivo, vale o comportamento nativo.
 - No modo **Nova janela**, janelas pop-out são um recurso do Obsidian **desktop**; em mobile o plugin abre em split.
+- No celular (modo telefone), o botão **+ New** mantém o comportamento nativo — o Obsidian já abre a nota em uma aba.
 - Duplo clique é tratado como um único clique (o segundo evento é bloqueado para não abrir dois splits/janelas).
