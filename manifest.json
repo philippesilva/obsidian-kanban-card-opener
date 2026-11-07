@@ -1,0 +1,9 @@
+{
+	"id": "kanban-card-opener",
+	"name": "Kanban Card Opener",
+	"version": "1.1.0",
+	"minAppVersion": "1.14.0",
+	"description": "Abre notas de qualquer view do Bases (tabela, cards, lista e kanban) em split ou em nova janela, em vez de substituir a view.",
+	"author": "Philippe",
+	"isDesktopOnly": false
+}
